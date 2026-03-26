@@ -41,8 +41,10 @@ class SineGen {
     // Ignore integer part (% 1 is there for a purpose :)
     var radValues = (f0Values / Float(samplingRate)) % 1
 
-    // Random phase noise
-    let randIni = MLXRandom.normal([f0Values.shape[0], f0Values.shape[2]])
+    // Random phase noise — must be UNIFORM [0, 1) to match torch.rand().
+    // The original port incorrectly used normal() (Gaussian), which produces
+    // large values that corrupt the harmonic phase and cause audio artifacts.
+    let randIni = MLXRandom.uniform(low: Float(0), high: Float(1), [f0Values.shape[0], f0Values.shape[2]])
     randIni[0..., 0] = MLXArray(0.0)
     radValues[0 ..< radValues.shape[0], 0, 0 ..< radValues.shape[2]] = radValues[0 ..< radValues.shape[0], 0, 0 ..< radValues.shape[2]] + randIni
 
