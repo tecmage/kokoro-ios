@@ -43,6 +43,7 @@ class AdainResBlk1d {
         bias: weights[weightKeyPrefix + ".pool.bias"]!,
         stride: 2,
         padding: 1,
+        outputPadding: 1,
         groups: dimIn
       )
     }
@@ -117,7 +118,6 @@ class AdainResBlk1d {
       } else if let convPool = pool as? ConvWeighted {
         x = convPool(x, conv: MLX.convTransposed1d)
       }
-      x = MLX.padded(x, widths: [IntOrPair([0, 0]), IntOrPair([1, 0]), IntOrPair([0, 0])])
     }
     x = MLX.swappedAxes(x, 2, 1)
 
