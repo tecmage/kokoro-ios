@@ -190,24 +190,37 @@ public final class KokoroTTS {
       textMask: textMask,
       style: globalStyle
     )
-    
+
+    // Evaluate to free BERT intermediate computation graph
+    durationFeatures.eval()
+
     // Step 5: Predict phoneme durations
     let (predictedDurations, alignmentTarget) = predictDurations(
       features: durationFeatures,
       batchSize: paddedInputIds.shape[1],
       speed: speed
     )
-    
+
     // Step 6: Generate aligned encodings
     let alignedEncoding = durationFeatures.transposed(0, 2, 1).matmul(alignmentTarget)
-    
+
+    // Evaluate to materialize alignment before prosody/decoder
+    alignedEncoding.eval()
+
     // Step 7: Predict prosody (F0, pitch)
     let (f0Prediction, nPrediction) = prosodyPredictor.F0NTrain(x: alignedEncoding, s: globalStyle)
-    
+
+    // Evaluate prosody outputs before decoder
+    f0Prediction.eval()
+    nPrediction.eval()
+
     // Step 8: Encode text for decoder
     let textEncoding = textEncoder(paddedInputIds, inputLengths: inputLengths, m: textMask)
     let asrFeatures = MLX.matmul(textEncoding, alignmentTarget)
-    
+
+    // Evaluate all decoder inputs to free upstream graphs
+    asrFeatures.eval()
+
     // Step 9: Generate audio
     let audio = decoder(
       asr: asrFeatures,

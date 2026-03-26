@@ -152,10 +152,13 @@ class Generator {
 
     harSource = MLX.squeezed(harSource.transposed(0, 2, 1), axis: 1)
     let (harSpec, harPhase) = stft.transform(inputData: harSource)
-    
+
     var har = MLX.concatenated([harSpec, harPhase], axis: 1)
     har = MLX.swappedAxes(har, 2, 1)
-        
+
+    // Evaluate harmonic source before upsampling loop
+    har.eval()
+
     var newX = x
     for i in 0 ..< numUpsamples {
       newX = LeakyReLU(negativeSlope: 0.1)(newX)
@@ -171,7 +174,7 @@ class Generator {
         newX = reflectionPad(newX)
       }
       newX = newX + xSource
-      
+
       var xs: MLXArray?
       for j in 0 ..< numKernels {
         if xs == nil {
@@ -182,6 +185,9 @@ class Generator {
         }
       }
       newX = xs! / numKernels
+
+      // Evaluate after each upsampling stage to free intermediate tensors
+      newX.eval()
     }
     
     newX = LeakyReLU(negativeSlope: 0.01)(newX)
