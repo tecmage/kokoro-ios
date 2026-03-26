@@ -105,6 +105,9 @@ func mlxStft(
   return spec.transposed(1, 0)
 }
 
+/// Standard overlap-add ISTFT matching torch.istft behavior.
+/// Replaces the previous strided implementation which had hardcoded
+/// assumptions and potential edge-case bugs.
 func mlxIstft(
   x: MLXArray,
   hopLength: Int? = nil,
@@ -131,47 +134,43 @@ func mlxIstft(
     w = MLX.concatenated([w, MLXArray.zeros([winLen - w.shape[0]])], axis: 0)
   }
 
-  let xTransposed = x.transposed(1, 0)
-  let t = (xTransposed.shape[0] - 1) * hopLen + winLen
-  let windowModLen = 20 / 5
+  // x shape: [freq_bins, time_frames]
+  let xTransposed = x.transposed(1, 0)  // [time_frames, freq_bins]
+  let numFrames = xTransposed.shape[0]
 
-  let wSquared = w * w
-  let totalWsquared = MLX.concatenated(Array(repeating: wSquared, count: t / winLen))
+  // IRFFT each frame and apply synthesis window
+  let windowed = MLXFFT.irfft(xTransposed, axis: 1) * w  // [numFrames, winLen]
+  windowed.eval()
 
-  let output = MLXFFT.irfft(xTransposed, axis: 1) * w
+  // Extract to CPU for standard overlap-add
+  let totalLen = (numFrames - 1) * hopLen + winLen
+  var output = [Float](repeating: 0, count: totalLen)
+  var winSquaredSum = [Float](repeating: 0, count: totalLen)
 
-  var outputs: [MLXArray] = []
-  var windowSums: [MLXArray] = []
+  let windowVals: [Float] = w.asArray(Float.self)
+  let allFrameData: [Float] = windowed.reshaped([-1]).asArray(Float.self)
 
-  for i in 0 ..< windowModLen {
-    let outputStride = output[.stride(from: i, by: windowModLen), .ellipsis].reshaped([-1])
-    let windowSumArray = totalWsquared[0 ..< outputStride.shape[0]]
-
-    outputs.append(MLX.concatenated([
-      MLXArray.zeros([i * hopLen]),
-      outputStride,
-      MLXArray.zeros([max(0, t - i * hopLen - outputStride.shape[0])]),
-    ]))
-
-    windowSums.append(MLX.concatenated([
-      MLXArray.zeros([i * hopLen]),
-      windowSumArray,
-      MLXArray.zeros([max(0, t - i * hopLen - windowSumArray.shape[0])]),
-    ]))
+  for frameIdx in 0 ..< numFrames {
+    let offset = frameIdx * hopLen
+    let dataOffset = frameIdx * winLen
+    for j in 0 ..< winLen {
+      output[offset + j] += allFrameData[dataOffset + j]
+      winSquaredSum[offset + j] += windowVals[j] * windowVals[j]
+    }
   }
 
-  var reconstructed = outputs[0]
-  var windowSum = windowSums[0]
-  for i in 1 ..< windowModLen {
-    reconstructed += outputs[i]
-    windowSum += windowSums[i]
+  // Normalize by window squared sum and trim edges (center=true padding)
+  let trimStart = winLen / 2
+  let trimEnd = totalLen - winLen / 2
+  var trimmed = [Float](repeating: 0, count: max(0, trimEnd - trimStart))
+  for i in trimStart ..< trimEnd {
+    let ws = winSquaredSum[i]
+    if ws > 1e-10 {
+      trimmed[i - trimStart] = output[i] / ws
+    }
   }
 
-  reconstructed =
-    reconstructed[winLen / 2 ..< (reconstructed.shape[0] - winLen / 2)] /
-    windowSum[winLen / 2 ..< (reconstructed.shape[0] - winLen / 2)]
-
-  return reconstructed
+  return MLXArray(trimmed)
 }
 
 class MLXSTFT {
@@ -230,10 +229,10 @@ class MLXSTFT {
     var reconstructed: [MLXArray] = []
 
     for batchIdx in 0 ..< magnitude.shape[0] {
-      let phaseCont = unwrap(p: phase[batchIdx])
-
-      // Combine magnitude and phase
-      let stft = magnitude[batchIdx] * MLX.exp(MLXArray(real: 0, imaginary: 1) * phaseCont)
+      // Combine magnitude and phase directly (matching torch.istft behavior).
+      // Phase values from sin() are in [-1, 1] — unwrapping is a no-op for
+      // this range and the Python reference does not unwrap.
+      let stft = magnitude[batchIdx] * MLX.exp(MLXArray(real: 0, imaginary: 1) * phase[batchIdx])
 
       // Inverse STFT
       let audio = mlxIstft(

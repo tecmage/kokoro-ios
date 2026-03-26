@@ -196,7 +196,11 @@ class Generator {
     newX = convPost(newX, conv: MLX.conv1d)
     newX = MLX.swappedAxes(newX, 2, 1)
     
-    let spec = MLX.exp(newX[0..., 0 ..< (postNFFt / 2 + 1), 0...])
+    // Clamp log-magnitude to prevent exp() overflow producing extreme values.
+    // Normal speech values stay well within [-8, 8]; values outside cause
+    // spectral spikes that manifest as high-pitched noise artifacts.
+    let logSpec = MLX.clip(newX[0..., 0 ..< (postNFFt / 2 + 1), 0...], min: -8, max: 8)
+    let spec = MLX.exp(logSpec)
     let phase = MLX.sin(newX[0..., (postNFFt / 2 + 1)..., 0...])
 
     let result = stft.inverse(magnitude: spec, phase: phase)
