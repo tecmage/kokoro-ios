@@ -178,9 +178,13 @@ public final class KokoroTTS {
     
     // Step 2: Tokenize and prepare input
     let (paddedInputIds, attentionMask, inputLengths, textMask, inputIds) = try prepareInputTensors(phonemizedText)
-    
-    // Step 3: Extract style embeddings from voice
-    let (globalStyle, acousticStyle) = extractStyleEmbeddings(from: voice, tokenCount: inputIds.count)
+
+    // Step 3: Extract style embeddings from voice.
+    // Must use the phoneme STRING length (matching Python's len(ps)), NOT the
+    // token count. The tokenizer drops characters not in vocab, so
+    // inputIds.count can be less than phonemizedText.count. The voice
+    // embedding is indexed by phoneme string length in the reference impl.
+    let (globalStyle, acousticStyle) = extractStyleEmbeddings(from: voice, tokenCount: phonemizedText.count)
     
     // Step 4: Encode text with BERT and predict duration
     let durationFeatures = encodeBERTAndDuration(
